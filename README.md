@@ -3,7 +3,8 @@
 A sample **CRUD order service** built with **Java 21** and **Spring Boot 3.3**.
 
 It exposes a REST API for creating, reading, updating and deleting customer orders,
-with line items, automatic total calculation, and a validated order lifecycle.
+with line items, automatic total calculation, a validated order lifecycle,
+paginated search, and aggregate statistics.
 
 ---
 
@@ -61,7 +62,8 @@ Base path: `/api/v1/orders`
 | Method | Path | Description |
 |---|---|---|
 | `POST` | `/api/v1/orders` | Create an order |
-| `GET` | `/api/v1/orders` | List orders (optional `?status=` or `?customerEmail=`) |
+| `GET` | `/api/v1/orders` | Paginated list with filters and sorting |
+| `GET` | `/api/v1/orders/stats` | Aggregate metrics across all orders |
 | `GET` | `/api/v1/orders/{id}` | Get an order by id |
 | `GET` | `/api/v1/orders/number/{orderNumber}` | Get an order by order number |
 | `PUT` | `/api/v1/orders/{id}` | Replace an order's details and items |
@@ -102,12 +104,60 @@ Response `201 Created`:
 }
 ```
 
-### List and filter
+### Paginated search
 
 ```bash
-curl "http://localhost:8080/api/v1/orders"
+curl "http://localhost:8080/api/v1/orders?page=0&size=20&sort=createdAt&direction=desc"
 curl "http://localhost:8080/api/v1/orders?status=CONFIRMED"
 curl "http://localhost:8080/api/v1/orders?customerEmail=riya@example.com"
+curl "http://localhost:8080/api/v1/orders?customerName=riya"
+```
+
+Response envelope:
+
+```json
+{
+  "content": [ ... ],
+  "page": 0,
+  "size": 20,
+  "totalElements": 42,
+  "totalPages": 3,
+  "first": true,
+  "last": false
+}
+```
+
+**Query parameters**
+
+| Param | Default | Notes |
+|---|---|---|
+| `status` | — | Filter by order status |
+| `customerEmail` | — | Exact email match (case-insensitive) |
+| `customerName` | — | Partial name match (case-insensitive) |
+| `page` | `0` | Zero-based page index |
+| `size` | `20` | Clamped to a maximum of `100` |
+| `sort` | `createdAt` | Whitelisted fields only; unknown values fall back to `createdAt` |
+| `direction` | `desc` | `asc` or `desc` |
+
+### Statistics
+
+```bash
+curl http://localhost:8080/api/v1/orders/stats
+```
+
+```json
+{
+  "totalOrders": 42,
+  "totalRevenue": 128450.00,
+  "averageOrderValue": 3058.33,
+  "countByStatus": {
+    "CREATED": 10,
+    "CONFIRMED": 12,
+    "SHIPPED": 8,
+    "DELIVERED": 9,
+    "CANCELLED": 3
+  }
+}
 ```
 
 ### Update status
@@ -173,7 +223,7 @@ src/main/java/com/example/orderservice/
 ├── OrderServiceApplication.java
 ├── controller/OrderController.java
 ├── domain/          Order, OrderItem, OrderStatus
-├── dto/             Request/response records + ApiError
+├── dto/             Request/response records, PageResponse, OrderStatsResponse, ApiError
 ├── exception/       Custom exceptions + GlobalExceptionHandler
 ├── repository/      OrderRepository
 └── service/         OrderService
@@ -184,7 +234,7 @@ src/main/java/com/example/orderservice/
 ## Possible Next Steps
 
 - Replace H2 with PostgreSQL and add Flyway migrations
-- Add pagination to the list endpoint
 - Add Spring Security with JWT
 - Publish OpenAPI docs via springdoc
 - Add Testcontainers for real-database integration tests
+- Add caching for the stats endpoint

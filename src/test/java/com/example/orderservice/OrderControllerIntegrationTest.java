@@ -9,8 +9,10 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
+import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.notNullValue;
+import static org.hamcrest.Matchers.startsWith;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
@@ -63,7 +65,7 @@ class OrderControllerIntegrationTest {
                 .andExpect(status().isCreated())
                 .andExpect(header().exists("Location"))
                 .andExpect(jsonPath("$.id", notNullValue()))
-                .andExpect(jsonPath("$.orderNumber").value(org.hamcrest.Matchers.startsWith("ORD-")))
+                .andExpect(jsonPath("$.orderNumber", startsWith("ORD-")))
                 .andExpect(jsonPath("$.status").value("CREATED"))
                 .andExpect(jsonPath("$.items", hasSize(2)))
                 .andExpect(jsonPath("$.totalAmount").value(5497.00));
@@ -100,11 +102,47 @@ class OrderControllerIntegrationTest {
     }
 
     @Test
-    void listOrders_returnsCollection() throws Exception {
+    void listOrders_returnsPaginatedEnvelope() throws Exception {
         createOrder();
-        mockMvc.perform(get(BASE))
+        mockMvc.perform(get(BASE).param("page", "0").param("size", "5"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$", hasSize(org.hamcrest.Matchers.greaterThanOrEqualTo(1))));
+                .andExpect(jsonPath("$.content", notNullValue()))
+                .andExpect(jsonPath("$.page").value(0))
+                .andExpect(jsonPath("$.size").value(5))
+                .andExpect(jsonPath("$.totalElements", greaterThanOrEqualTo(1)))
+                .andExpect(jsonPath("$.first").value(true));
+    }
+
+    @Test
+    void listOrders_clampsOversizedPageSize() throws Exception {
+        mockMvc.perform(get(BASE).param("size", "5000"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.size").value(100));
+    }
+
+    @Test
+    void listOrders_withUnknownSortField_fallsBackToDefault() throws Exception {
+        mockMvc.perform(get(BASE).param("sort", "notARealField"))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void listOrders_filtersByStatus() throws Exception {
+        createOrder();
+        mockMvc.perform(get(BASE).param("status", "CREATED"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content", notNullValue()));
+    }
+
+    @Test
+    void stats_returnsAggregates() throws Exception {
+        createOrder();
+        mockMvc.perform(get(BASE + "/stats"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalOrders", greaterThanOrEqualTo(1)))
+                .andExpect(jsonPath("$.totalRevenue", notNullValue()))
+                .andExpect(jsonPath("$.averageOrderValue", notNullValue()))
+                .andExpect(jsonPath("$.countByStatus.CREATED", notNullValue()));
     }
 
     @Test
