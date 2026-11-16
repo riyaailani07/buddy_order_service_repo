@@ -7,14 +7,22 @@ import com.example.orderservice.dto.OrderItemRequest;
 import com.example.orderservice.dto.OrderItemResponse;
 import com.example.orderservice.dto.OrderRequest;
 import com.example.orderservice.dto.OrderResponse;
+import com.example.orderservice.dto.OrderStatsResponse;
+import com.example.orderservice.dto.PageResponse;
 import com.example.orderservice.exception.InvalidOrderStateException;
 import com.example.orderservice.exception.OrderNotFoundException;
 import com.example.orderservice.repository.OrderRepository;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.Year;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -40,16 +48,25 @@ public class OrderService {
         return toResponse(orderRepository.save(order));
     }
 
-    public List<OrderResponse> findAll(OrderStatus status, String customerEmail) {
-        List<Order> orders;
+    /**
+     * Paginated search. Filters are optional and combine as follows:
+     * status takes precedence, then customerEmail, then a name search.
+     */
+    public PageResponse<OrderResponse> search(OrderStatus status,
+                                              String customerEmail,
+                                              String customerName,
+                                              Pageable pageable) {
+        Page<Order> page;
         if (status != null) {
-            orders = orderRepository.findByStatus(status);
+            page = orderRepository.findByStatus(status, pageable);
         } else if (customerEmail != null && !customerEmail.isBlank()) {
-            orders = orderRepository.findByCustomerEmailIgnoreCase(customerEmail);
+            page = orderRepository.findByCustomerEmailIgnoreCase(customerEmail.trim(), pageable);
+        } else if (customerName != null && !customerName.isBlank()) {
+            page = orderRepository.findByCustomerNameContainingIgnoreCase(customerName.trim(), pageable);
         } else {
-            orders = orderRepository.findAll();
+            page = orderRepository.findAll(pageable);
         }
-        return orders.stream().map(OrderService::toResponse).toList();
+        return PageResponse.from(page, OrderService::toResponse);
     }
 
     public OrderResponse findById(Long id) {
@@ -60,6 +77,27 @@ public class OrderService {
         Order order = orderRepository.findByOrderNumber(orderNumber)
                 .orElseThrow(() -> OrderNotFoundException.byOrderNumber(orderNumber));
         return toResponse(order);
+    }
+
+    /**
+     * Aggregate metrics across every order.
+     */
+    public OrderStatsResponse stats() {
+        long totalOrders = orderRepository.count();
+        BigDecimal totalRevenue = orderRepository.sumTotalAmount();
+        if (totalRevenue == null) {
+            totalRevenue = BigDecimal.ZERO;
+        }
+        BigDecimal average = totalOrders == 0
+                ? BigDecimal.ZERO
+                : totalRevenue.divide(BigDecimal.valueOf(totalOrders), 2, RoundingMode.HALF_UP);
+
+        Map<String, Long> countByStatus = new LinkedHashMap<>();
+        for (OrderStatus status : OrderStatus.values()) {
+            countByStatus.put(status.name(), orderRepository.countByStatus(status));
+        }
+
+        return new OrderStatsResponse(totalOrders, totalRevenue, average, countByStatus);
     }
 
     @Transactional
@@ -108,7 +146,7 @@ public class OrderService {
     private OrderItem toEntity(OrderItemRequest itemRequest) {
         OrderItem item = new OrderItem();
         item.setProductCode(itemRequest.productCode().trim());
-        item.setProductName(item.productName().trim());
+        item.setProductName(itemRequest.productName().trim());
         item.setQuantity(itemRequest.quantity());
         item.setUnitPrice(itemRequest.unitPrice());
         return item;
